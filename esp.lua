@@ -12,7 +12,7 @@ local drawings  = {}
 
 local CHAR_HEIGHT     = 5.2
 local CHAR_HALF_WIDTH = 1.0
-local TIMEOUT         = 10.0
+local TIMEOUT         = 2.0
 
 Transport.getClientChannels().RemoteSnapshot.OnClientEvent:Connect(function(data)
     local frame, err = Codec.decode(data)
@@ -47,6 +47,8 @@ Transport.getClientChannels().RemoteSnapshot.OnClientEvent:Connect(function(data
     end
 
     for _, id in ipairs(frame.RemovedActorIds) do
+        actors[id] = nil
+        baselines[id] = nil
     end
 end)
 
@@ -142,7 +144,7 @@ local function drawESP(pos, color, frozen, name, dist)
     table.insert(drawings, ntxt)
 
     local dtxt = Drawing.new("Text")
-    dtxt.Text     = dist .. "м"
+    dtxt.Text     = dist .. "m"
     dtxt.Position = Vector2.new((minX+maxX)/2, maxY + 3)
     dtxt.Size     = 12
     dtxt.Color    = Color3.new(1,1,1)
