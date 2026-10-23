@@ -9,10 +9,7 @@ local Transport = require(RS.MovementV2.Transport)
 local actors    = {}
 local baselines = {}
 local drawings  = {}
-
-local CHAR_HEIGHT     = 5.2
-local CHAR_HALF_WIDTH = 1.0
-local TIMEOUT         = 2.0
+local TIMEOUT   = 2.0
 
 Transport.getClientChannels().RemoteSnapshot.OnClientEvent:Connect(function(data)
     local frame, err = Codec.decode(data)
@@ -45,11 +42,6 @@ Transport.getClientChannels().RemoteSnapshot.OnClientEvent:Connect(function(data
             end
         end
     end
-
-    for _, id in ipairs(frame.RemovedActorIds) do
-        actors[id] = nil
-        baselines[id] = nil
-    end
 end)
 
 local function clearDrawings()
@@ -59,93 +51,73 @@ local function clearDrawings()
     drawings = {}
 end
 
+-- Используем WorldToScreenPoint для точного совпадения с Drawing
 local function w2s(pos)
-    local sp, vis = Camera:WorldToViewportPoint(pos)
+    local sp, vis = Camera:WorldToScreenPoint(pos)
     return Vector2.new(sp.X, sp.Y), vis, sp.Z
 end
 
+-- Новая функция отрисовки обычного 2D бокса
 local function drawESP(pos, color, frozen, name, dist)
-    local hw = CHAR_HALF_WIDTH
-    local h  = CHAR_HEIGHT
+    -- pos - это позиция HumanoidRootPart (примерно центр тела)
+    -- Поднимаем точку до головы и опускаем до пят
+    local headPos = pos + Vector3.new(0, 1.5, 0)
+    local feetPos = pos - Vector3.new(0, 2.5, 0)
+
+    local headSP, headVis, headZ = w2s(headPos)
+    local feetSP, feetVis, feetZ = w2s(feetPos)
+
+    -- Если голова или ноги за экраном/камерой, не рисуем
+    if not headVis or not feetVis or headZ <= 0 or feetZ <= 0 then return end
+
+    local height = math.abs(feetSP.Y - headSP.Y)
+    local width = height / 2 -- Пропорции стандартного персонажа
+    local centerX = feetSP.X
+    local topY = headSP.Y
+    local bottomY = feetSP.Y
+
+    -- Защита от гигантских/крошечных боксов
+    if height < 10 or height > 1000 then return end
+
+    local leftX = centerX - (width / 2)
+    local rightX = centerX + (width / 2)
 
     local corners = {
-        pos + Vector3.new( hw, 0,  hw),
-        pos + Vector3.new(-hw, 0,  hw),
-        pos + Vector3.new(-hw, 0, -hw),
-        pos + Vector3.new( hw, 0, -hw),
-        pos + Vector3.new( hw, h,  hw),
-        pos + Vector3.new(-hw, h,  hw),
-        pos + Vector3.new(-hw, h, -hw),
-        pos + Vector3.new( hw, h, -hw),
+        Vector2.new(leftX, topY),
+        Vector2.new(rightX, topY),
+        Vector2.new(rightX, bottomY),
+        Vector2.new(leftX, bottomY),
     }
-
-    local proj = {}
-    local anyVis = false
-    for i, c in ipairs(corners) do
-        local sp, vis, depth = w2s(c)
-        proj[i] = {pos=sp, vis=vis, depth=depth}
-        if vis and depth > 0 then anyVis = true end
-    end
-    if not anyVis then return end
-
-    local minX, minY =  math.huge,  math.huge
-    local maxX, maxY = -math.huge, -math.huge
-    for _, p in ipairs(proj) do
-        if p.vis and p.depth > 0 then
-            if p.pos.X < minX then minX = p.pos.X end
-            if p.pos.Y < minY then minY = p.pos.Y end
-            if p.pos.X > maxX then maxX = p.pos.X end
-            if p.pos.Y > maxY then maxY = p.pos.Y end
-        end
-    end
-    if minX == math.huge then return end
-
-    local w  = maxX - minX
-    local h2 = maxY - minY
-    if w < 3 or h2 < 3 or w > 800 or h2 > 800 then return end
 
     local alpha = frozen and 0.5 or 1
-    local corners2D = {
-        Vector2.new(minX, minY),
-        Vector2.new(maxX, minY),
-        Vector2.new(maxX, maxY),
-        Vector2.new(minX, maxY),
-    }
+
+    -- Рисуем 4 линии
     for i = 1, 4 do
         local ln = Drawing.new("Line")
-        ln.From         = corners2D[i]
-        ln.To           = corners2D[i % 4 + 1]
+        ln.From         = corners[i]
+        ln.To           = corners[i % 4 + 1]
         ln.Color        = color
-        ln.Thickness    = frozen and 1 or 2
+        ln.Thickness    = 1.5
         ln.Transparency = alpha
         ln.Visible      = true
         table.insert(drawings, ln)
     end
 
-    local vp = Camera.ViewportSize
-    local footSP = w2s(pos)
-    local tr = Drawing.new("Line")
-    tr.From         = Vector2.new(vp.X * 0.5, vp.Y)
-    tr.To           = footSP
-    tr.Color        = color
-    tr.Thickness    = 1
-    tr.Transparency = alpha * 0.8
-    tr.Visible      = true
-    table.insert(drawings, tr)
-
+    -- Текст с именем (сверху)
     local ntxt = Drawing.new("Text")
     ntxt.Text     = name .. (frozen and " ?" or "")
-    ntxt.Position = Vector2.new((minX+maxX)/2, minY - 16)
-    ntxt.Size     = 13
+    ntxt.Position = Vector2.new(centerX, topY - 16)
+    ntxt.Size     = 14
     ntxt.Color    = color
     ntxt.Outline  = true
     ntxt.Center   = true
     ntxt.Visible  = true
     table.insert(drawings, ntxt)
 
+    -- Текст с дистанцией (снизу)
     local dtxt = Drawing.new("Text")
     dtxt.Text     = dist .. "m"
-    dtxt.Position = Vector2.new((minX+maxX)/2, maxY + 3)
+    dtxt.Position = Vector2.new(centerX, bottomY + 2)
     dtxt.Size     = 12
     dtxt.Color    = Color3.new(1,1,1)
     dtxt.Outline  = true
@@ -156,7 +128,7 @@ end
 
 local LP = Players.LocalPlayer
 
-RunService.Heartbeat:Connect(function(dt)
+RunService.Heartbeat:Connect(function()
     clearDrawings()
 
     local now    = tick()
@@ -171,6 +143,7 @@ RunService.Heartbeat:Connect(function(dt)
             continue
         end
 
+        -- Предсказание движения
         local predictedPos = data.pos
         if age > 0.1 and data.vel then
             local decay = math.max(0, 1 - age * 0.3)
@@ -178,19 +151,21 @@ RunService.Heartbeat:Connect(function(dt)
         end
 
         local frozen = age > 0.15
-        local footPos = predictedPos - Vector3.new(0, 1.0, 0)
         local dist    = math.floor((camPos - predictedPos).Magnitude)
 
+        -- Игнорируем себя
         local name = tostring(data.userId)
         local pl = Players:GetPlayerByUserId(data.userId)
-        if pl then name = pl.Name end
+        if pl then 
+            name = pl.Name 
+            if pl == LP then continue end
+        end
 
-        if pl == LP then continue end
-
+        -- Цвет: красный для живых, оранжевый для "замороженных" (потерявших связь)
         local color = frozen
             and Color3.fromRGB(255, 165, 0)
-            or  Color3.fromRGB(255, 50, 50)
+            or  Color3.fromRGB(0, 255, 0) -- Сделал ярко-зеленым для заметности
 
-        drawESP(footPos, color, frozen, name, dist)
+        drawESP(predictedPos, color, frozen, name, dist)
     end
 end)
